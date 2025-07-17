@@ -3,4 +3,5 @@ joblib
 scikit-learn
 scipy
 numpy
-myspellchecker
+pyspellchecker
+
