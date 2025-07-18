@@ -1,70 +1,72 @@
-from flask import Flask, request, jsonify
+import streamlit as st
+import os
+import pickle
 import joblib
-from sklearn.base import BaseEstimator, TransformerMixin
+import base64
 import re
-from urllib.parse import urlparse
+import time
 
-class SpamFeaturesExtractor(BaseEstimator, TransformerMixin):
-    def __init__(self):
-        self.spam_keywords = [
-            'free', 'win', 'winner', 'prize', 'congratulations', 'urgent',
-            'offer', 'money', 'cash', 'click', 'buy', 'purchase', 'limited',
-            'act now', 'call now', 'guaranteed', 'no cost', 'risk-free'
-        ]
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from sklearn.feature_extraction.text import TfidfVectorizer
 
-    def extract_urls(self, text):
-        return re.findall(r'https?://\S+|www\.\S+', text)
-
-    def url_features(self, urls):
-        features = {
-            'num_urls': len(urls),
-            'num_suspicious_domains': 0
-        }
-        suspicious_domains = ['bit.ly', 'tinyurl.com', 'goo.gl', 'grabify.link', 'shorturl.at']
-
-        for url in urls:
-            domain = urlparse(url).netloc.lower()
-            if any(susp in domain for susp in suspicious_domains):
-                features['num_suspicious_domains'] += 1
-
-        return features
-
-    def keyword_features(self, text):
-        lower_text = text.lower()
-        return {
-            'num_spam_keywords': sum(word in lower_text for word in self.spam_keywords)
-        }
-
-    def fit(self, X, y=None):
-        return self
-
-    def transform(self, X):
-        features = []
-        for email in X:
-            urls = self.extract_urls(email)
-            url_feats = self.url_features(urls)
-            keyword_feats = self.keyword_features(email)
-            combined = {**url_feats, **keyword_feats}
-            features.append(list(combined.values()))
-        return features
-
-app = Flask(__name__)
-
-# Load the trained model and vectorizer
+# Load model and vectorizer
 model = joblib.load("spam_classifier.joblib")
 vectorizer = joblib.load("vectorizer.joblib")
 
-@app.route("/predict", methods=["POST"])
-def predict():
-    data = request.get_json()
-    subject = data.get("subject", "")
-    body = data.get("body", "")
+# Gmail API scope
+SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
-    combined_text = subject + " " + body
-    features = vectorizer.transform([combined_text])
-    prediction = model.predict(features)[0]
-    
-    return jsonify({"verdict": "spam" if prediction == 1 else "ham"})
+@st.cache_resource
+def gmail_authenticate():
+    flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
+    creds = flow.run_local_server(port=0)
+    service = build('gmail', 'v1', credentials=creds)
+    return service
 
-if __name__ == "__main__":
-    app.run(debug=True)
+def get_email_snippets(service, max_results=10):
+    results = service.users().messages().list(userId='me', maxResults=max_results).execute()
+    messages = results.get('messages', [])
+
+    email_data = []
+    for msg in messages:
+        msg_data = service.users().messages().get(userId='me', id=msg['id'], format='full').execute()
+        headers = msg_data['payload']['headers']
+        subject = next((h['value'] for h in headers if h['name'] == 'Subject'), '(No Subject)')
+        snippet = msg_data.get('snippet', '')
+        email_data.append({'subject': subject, 'snippet': snippet})
+    return email_data
+
+def preprocess(text):
+    text = re.sub(r'\W+', ' ', text)  # Remove non-words
+    return text.lower()
+
+def classify_email(text):
+    X = vectorizer.transform([preprocess(text)])
+    prediction = model.predict(X)[0]
+    return "📬 HAM" if prediction == 0 else "🚨 SPAM"
+
+# === Streamlit UI ===
+st.title("📧 Gmail Spam Detector")
+st.write("This app fetches your latest Gmail emails and classifies them using your trained spam model.")
+
+if st.button("🔍 Scan My Inbox"):
+    try:
+        with st.spinner("Authenticating with Gmail..."):
+            service = gmail_authenticate()
+
+        with st.spinner("Fetching emails..."):
+            emails = get_email_snippets(service, max_results=10)
+
+        st.success("Fetched and classified successfully!")
+
+        for i, email in enumerate(emails):
+            st.markdown(f"### 📩 Email #{i+1}")
+            st.write(f"**Subject:** {email['subject']}")
+            st.write(f"**Snippet:** {email['snippet']}")
+            result = classify_email(email['subject'] + " " + email['snippet'])
+            st.write(f"**Prediction:** {result}")
+            st.markdown("---")
+
+    except Exception as e:
+        st.error(f"Something went wrong: {e}")
