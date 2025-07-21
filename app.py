@@ -1,18 +1,14 @@
 import streamlit as st
 import os
-import pickle
 import joblib
-import base64
 import re
-import time
+import pandas as pd
 
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
-from sklearn.feature_extraction.text import TfidfVectorizer
 
-# Load model and vectorizer
+# Load model pipeline (includes vectorizer)
 model = joblib.load("spam_classifier.joblib")
-vectorizer = joblib.load("vectorizer.joblib")
 
 # Gmail API scope
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
@@ -38,25 +34,26 @@ def get_email_snippets(service, max_results=10):
     return email_data
 
 def preprocess(text):
-    text = re.sub(r'\W+', ' ', text)  # Remove non-words
+    text = re.sub(r'\W+', ' ', text)  # Remove non-word characters
     return text.lower()
 
-def classify_email(text):
-    X = vectorizer.transform([preprocess(text)])
-import pandas as pd
+def classify_email(subject, body):
+    # Preprocess both parts
+    cleaned_subject = preprocess(subject)
+    cleaned_body = preprocess(body)
 
-# Create a DataFrame with proper columns the model was trained on
-email_input = pd.DataFrame([{
-    "subject": subject,
-    "body": body
-}])
+    # Create input in format the model expects
+    email_input = pd.DataFrame([{
+        "subject": cleaned_subject,
+        "body": cleaned_body
+    }])
 
-# Predict
-prediction = model.predict(email_input)
-
+    # Predict
+    prediction = model.predict(email_input)[0]
     return "📬 HAM" if prediction == 0 else "🚨 SPAM"
 
 # === Streamlit UI ===
+st.set_page_config(page_title="Gmail Spam Detector", page_icon="📧")
 st.title("📧 Gmail Spam Detector")
 st.write("This app fetches your latest Gmail emails and classifies them using your trained spam model.")
 
@@ -68,15 +65,16 @@ if st.button("🔍 Scan My Inbox"):
         with st.spinner("Fetching emails..."):
             emails = get_email_snippets(service, max_results=10)
 
-        st.success("Fetched and classified successfully!")
+        st.success("✅ Emails fetched and classified!")
 
         for i, email in enumerate(emails):
             st.markdown(f"### 📩 Email #{i+1}")
             st.write(f"**Subject:** {email['subject']}")
             st.write(f"**Snippet:** {email['snippet']}")
-            result = classify_email(email['subject'] + " " + email['snippet'])
+            result = classify_email(email['subject'], email['snippet'])
             st.write(f"**Prediction:** {result}")
             st.markdown("---")
 
     except Exception as e:
-        st.error(f"Something went wrong: {e}")
+        st.error(f"❌ Something went wrong: {e}")
+
