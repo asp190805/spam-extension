@@ -3,11 +3,10 @@ import os
 import joblib
 import re
 import pandas as pd
-
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
-# Load model pipeline (includes vectorizer)
+# Load model (already includes preprocessing)
 model = joblib.load("spam_classifier.joblib")
 
 # Gmail API scope
@@ -23,7 +22,6 @@ def gmail_authenticate():
 def get_email_snippets(service, max_results=10):
     results = service.users().messages().list(userId='me', maxResults=max_results).execute()
     messages = results.get('messages', [])
-
     email_data = []
     for msg in messages:
         msg_data = service.users().messages().get(userId='me', id=msg['id'], format='full').execute()
@@ -34,26 +32,22 @@ def get_email_snippets(service, max_results=10):
     return email_data
 
 def preprocess(text):
-    text = re.sub(r'\W+', ' ', text)  # Remove non-word characters
-    return text.lower()
+    return re.sub(r'\W+', ' ', text).lower()
 
 def classify_email(subject, body):
-    # Preprocess both parts
-    cleaned_subject = preprocess(subject)
-    cleaned_body = preprocess(body)
-
-    # Create input in format the model expects
+    # Provide dummy values for all expected features
     email_input = pd.DataFrame([{
-        "subject": cleaned_subject,
-        "body": cleaned_body
+        "subject": subject,
+        "body": body,
+        "has_attachment": 0,
+        "num_links": 0,
+        "attachment_ext": "none",
+        "from_name": "unknown"
     }])
-
-    # Predict
     prediction = model.predict(email_input)[0]
     return "📬 HAM" if prediction == 0 else "🚨 SPAM"
 
 # === Streamlit UI ===
-st.set_page_config(page_title="Gmail Spam Detector", page_icon="📧")
 st.title("📧 Gmail Spam Detector")
 st.write("This app fetches your latest Gmail emails and classifies them using your trained spam model.")
 
@@ -65,7 +59,7 @@ if st.button("🔍 Scan My Inbox"):
         with st.spinner("Fetching emails..."):
             emails = get_email_snippets(service, max_results=10)
 
-        st.success("✅ Emails fetched and classified!")
+        st.success("Fetched and classified successfully!")
 
         for i, email in enumerate(emails):
             st.markdown(f"### 📩 Email #{i+1}")
@@ -77,4 +71,3 @@ if st.button("🔍 Scan My Inbox"):
 
     except Exception as e:
         st.error(f"❌ Something went wrong: {e}")
-
