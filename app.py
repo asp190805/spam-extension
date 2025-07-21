@@ -43,7 +43,17 @@ def preprocess(text):
 
 def classify_email(text):
     X = vectorizer.transform([preprocess(text)])
-    prediction = model.predict(X)[0]
+import pandas as pd
+
+# Create a DataFrame with proper columns the model was trained on
+email_input = pd.DataFrame([{
+    "subject": subject,
+    "body": body
+}])
+
+# Predict
+prediction = model.predict(email_input)
+
     return "📬 HAM" if prediction == 0 else "🚨 SPAM"
 
 # === Streamlit UI ===
